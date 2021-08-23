@@ -23,15 +23,17 @@ SUPPORTED_MODELS = {
 
 
 class Rewriter:
-    def __init__(self, model_name):
+    def __init__(self, mode: RewritingMode, model_name):
         if model_name not in SUPPORTED_MODELS:
             raise ValueError(f"{model_name} is no supported model. Choose one of: {SUPPORTED_MODELS.keys()}")
+        self.mode: RewritingMode = mode
         self.pos_tagger = spacy.load("en_core_web_lg")
         self.mask_token = SUPPORTED_MODELS[model_name]
         self.bert_unmasker = transformers.pipeline(
             "fill-mask", model=model_name
         )
         self.replace_pos_tags = {"ADJ", "ADV", "NOUN", "VERB"}
+        self.insert_pos_tags = {"ADJ", "ADV", "NOUN", "VERB"}
         self.original_token_score_threshold = 0.01
         self.new_token_score_threshold = 0.01
 
@@ -41,17 +43,19 @@ class Rewriter:
 
         tokens = self.pos_tagger(sentence)
         for i, tok in enumerate(tokens):
-            if tok.pos_ not in self.replace_pos_tags:
+            if self.mode == RewritingMode.REPLACE and tok.pos_ not in self.replace_pos_tags:
                 continue
-            replacements = self._best_replacements(
+            elif self.mode == RewritingMode.INSERT and tok.pos_ not in self.insert_pos_tags:
+                continue
+            new_tokens = self._best_tokens(
                 tokens, i, context_before, context_after
             )
-            for replacement in replacements:
-                new_sentence = self._make_new_sentence(tokens, i, replacement)
+            for new_token in new_tokens:
+                new_sentence = self._make_new_sentence(tokens, i, new_token)
                 rewritten_sentences.append(new_sentence)
         return rewritten_sentences
 
-    def _best_replacements(
+    def _best_tokens(
         self, tokens, i: int, prefix: str, suffix: str
     ) -> typing.List[str]:
         original_token = tokens[i].text.lower()
@@ -73,11 +77,17 @@ class Rewriter:
         ]
         return best_replacements
 
-    def _make_new_sentence(self, tokens, replacement_i: int, new_token: str):
-        new_tokens = [
-            tok.text if i != replacement_i else new_token
-            for i, tok in enumerate(tokens)
-        ]
+    def _make_new_sentence(self, tokens, index: int, new_token: str):
+        if self.mode == RewritingMode.REPLACE:
+            new_tokens = [
+                tok.text if i != index else new_token
+                for i, tok in enumerate(tokens)
+            ]
+        elif self.mode == RewritingMode.INSERT:
+            new_tokens = [tok.text for tok in tokens]
+            new_tokens.insert(index, new_token)
+        else:
+            raise RuntimeError("Unknown mode")
         return " ".join(new_tokens)
 
 
@@ -162,15 +172,20 @@ def main():
         default=1,
     )
     parser.add_argument(
-        "-m",
         "--model",
         help=f"Name of the huggingface fill-mask model. Choose one of: {SUPPORTED_MODELS.keys()}",
         type=str,
         default="distilbert-base-cased"
     )
+    parser.add_argument(
+        "--mode",
+        help=f"Mode how the generated token will be used for rewriting. Choose of: {[v.value for v in RewritingMode]}",
+        default=RewritingMode.REPLACE,
+        type=RewritingMode
+    )
     parsed = parser.parse_args()
 
-    rewriter = Rewriter(parsed.model)
+    rewriter = Rewriter(parsed.mode, parsed.model)
     rewriter.original_token_score_threshold = parsed.original_token_score_threshold
     rewriter.new_token_score_threshold = parsed.new_token_score_threshold
     reader = CorpusReader(window_size=parsed.window_size)
