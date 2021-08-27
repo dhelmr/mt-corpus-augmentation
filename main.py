@@ -6,6 +6,7 @@ import enum
 
 import transformers
 import spacy
+from tqdm import tqdm
 
 
 class RewritingMode(enum.Enum):
@@ -100,15 +101,15 @@ class CorpusSentence:
 
 
 class CorpusReader:
-    def __init__(self, window_size: int = 5):
+    def __init__(self, english_path: str, foreign_path: str, window_size: int = 5):
         self.window_size = window_size
+        self.english_path = english_path
+        self.foreign_path = foreign_path
 
-    def read(
-        self, english_path: str, foreign_path: str
-    ) -> typing.Iterable[CorpusSentence]:
+    def read(self) -> typing.Iterable[CorpusSentence]:
         context_before = [""] * self.window_size
         context_after = []
-        with open(english_path, "r") as e, open(foreign_path) as f:
+        with open(self.english_path, "r") as e, open(self.foreign_path) as f:
             for i in range(self.window_size):
                 context_after.append(e.readline().strip())
             for next_line in e:
@@ -124,6 +125,11 @@ class CorpusReader:
                 )
                 context_before.pop(0)
                 context_before.append(sentence)
+
+    def number_of_lines(self) -> int:
+        with open(self.english_path) as f:
+            count = sum(1 for _ in f)
+        return count
 
 
 class ParallelCorpusWriter:
@@ -183,27 +189,37 @@ def main():
         default=RewritingMode.REPLACE,
         type=RewritingMode
     )
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        default=False,
+        help="Verbose output"
+    )
     parsed = parser.parse_args()
 
     rewriter = Rewriter(parsed.mode, parsed.model)
     rewriter.original_token_score_threshold = parsed.original_token_score_threshold
     rewriter.new_token_score_threshold = parsed.new_token_score_threshold
-    reader = CorpusReader(window_size=parsed.window_size)
+    reader = CorpusReader(english_path=parsed.english, foreign_path=parsed.foreign, window_size=parsed.window_size)
     corpus_writer = ParallelCorpusWriter(dir_path=parsed.output)
-    for sentence in reader.read(
-        english_path=parsed.english, foreign_path=parsed.foreign
-    ):
+    iterator = reader.read()
+    if not parsed.verbose:
+        iterator = tqdm(iterator, total=reader.number_of_lines())
+    for sentence in iterator:
         new_sentences = rewriter.rewrite(
             sentence.english_text, sentence.context_before, sentence.context_after
         )
-        print("Original English: ", sentence.english_text)
-        print("Original Foreign: ", sentence.foreign_text)
-        print(f"Generated Sentences ({len(new_sentences)}):")
+        if parsed.verbose:
+            print("Original English: ", sentence.english_text)
+            print("Original Foreign: ", sentence.foreign_text)
+            print(f"Generated Sentences ({len(new_sentences)}):")
 
+            for ns in new_sentences:
+                print("\t", ns)
+            print("------------------------------------------\n")
         for ns in new_sentences:
-            print("\t", ns)
             corpus_writer.write_sentence_pair(foreign=sentence.foreign_text, english=ns)
-        print("------------------------------------------\n")
 
 
 if __name__ == "__main__":
