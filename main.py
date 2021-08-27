@@ -1,8 +1,10 @@
 import argparse
 import dataclasses
+import json
 import os
 import typing
 import enum
+from json import JSONEncoder
 
 import transformers
 import spacy
@@ -12,6 +14,7 @@ from tqdm import tqdm
 class RewritingMode(enum.Enum):
     REPLACE = "replace"
     INSERT = "insert"
+
 
 
 SUPPORTED_MODELS = {
@@ -206,6 +209,13 @@ def main():
     iterator = reader.read()
     if not parsed.verbose:
         iterator = tqdm(iterator, total=reader.number_of_lines())
+    # write configuration for later reference
+    config_path = os.path.join(parsed.output, "config.json")
+    config_json = parsed.__dict__.copy()
+    config_json["mode"] = config_json["mode"].value
+    with open(config_path, "w") as f:
+        json.dump(config_json, f, default=vars)
+    # start reading sentence by sentence
     for sentence in iterator:
         new_sentences = rewriter.rewrite(
             sentence.english_text, sentence.context_before, sentence.context_after
