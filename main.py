@@ -248,7 +248,7 @@ def main():
     parsed = parser.parse_args()
 
     if parsed.mode == "fill-mask":
-        transformer = MaskRewriter(parsed.mode, parsed.model)
+        transformer = MaskRewriter(parsed.fill_mask_mode, parsed.model)
         transformer.original_token_score_threshold = parsed.original_token_score_threshold
         transformer.new_token_score_threshold = parsed.new_token_score_threshold
     elif parsed.mode == "translate-transform":
@@ -267,10 +267,10 @@ def main():
     # write configuration for later reference
     config_path = os.path.join(parsed.output, "config.json")
     config_json = parsed.__dict__.copy()
-    if "fill-mask-mode" in config_json:
-        config_json["fill-mask-mode"] = config_json["fill-mask-mode"].value
+    if "fill_mask_mode" in config_json:
+        config_json["fill_mask_mode"] = config_json["fill_mask_mode"].value
     with open(config_path, "w") as f:
-        json.dump(config_json, f, default=vars)
+        json.dump(config_json, f)
     # start reading sentence by sentence
     for sentence in iterator:
         new_sentences = transformer.transform(
