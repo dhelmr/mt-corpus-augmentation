@@ -9,6 +9,7 @@ from json import JSONEncoder
 import transformers
 import spacy
 from tqdm import tqdm
+from transformers import FSMTTokenizer, FSMTForConditionalGeneration
 
 
 class RewritingMode(enum.Enum):
@@ -17,7 +18,7 @@ class RewritingMode(enum.Enum):
 
 
 
-SUPPORTED_MODELS = {
+SUPPORTED_MASK_MODELS = {
     "bert-base-cased" : "[MASK]",
     "bert-large-cased": "[MASK]",
     "roberta-large": "<mask>",
@@ -26,13 +27,13 @@ SUPPORTED_MODELS = {
 }
 
 
-class Rewriter:
+class MaskRewriter:
     def __init__(self, mode: RewritingMode, model_name):
-        if model_name not in SUPPORTED_MODELS:
-            raise ValueError(f"{model_name} is no supported model. Choose one of: {SUPPORTED_MODELS.keys()}")
+        if model_name not in SUPPORTED_MASK_MODELS:
+            raise ValueError(f"{model_name} is no supported mask model. Choose one of: {SUPPORTED_MASK_MODELS.keys()}")
         self.mode: RewritingMode = mode
         self.pos_tagger = spacy.load("en_core_web_lg")
-        self.mask_token = SUPPORTED_MODELS[model_name]
+        self.mask_token = SUPPORTED_MASK_MODELS[model_name]
         self.bert_unmasker = transformers.pipeline(
             "fill-mask", model=model_name
         )
@@ -42,7 +43,7 @@ class Rewriter:
         self.new_token_score_threshold = 0.01
 
 
-    def rewrite(self, sentence: str, context_before: str, context_after: str):
+    def transform(self, sentence: str, context_before: str, context_after: str) -> typing.List[str]:
         rewritten_sentences = []
 
         tokens = self.pos_tagger(sentence)
@@ -135,6 +136,33 @@ class CorpusReader:
         return count
 
 
+class TranslateTransformer:
+    def __init__(self, model_from_english: str, model_to_english: str, n_iterations: int):
+        self.tokenizer_fe = FSMTTokenizer.from_pretrained(model_to_english)
+        self.tokenizer_ef = FSMTTokenizer.from_pretrained(model_from_english)
+        self.model_fe = FSMTForConditionalGeneration.from_pretrained(model_to_english)
+        self.model_ef = FSMTForConditionalGeneration.from_pretrained(model_from_english)
+        self.n_iterations = n_iterations
+
+    def _translate_with(self, tokenizer, model, text):
+        input_ids = tokenizer.encode(text, return_tensors="pt")
+        outputs = model.generate(input_ids)
+        decoded = tokenizer.decode(outputs[0], skip_special_tokens=True)
+        return decoded
+
+    def transform(self, sentence: str, context_before="", context_after="") -> typing.List[str]:
+        transformed_sentences = set()
+        current_input = sentence
+        for i in range(self.n_iterations):
+            foreign_translation = self._translate_with(self.tokenizer_ef, self.model_ef, current_input)
+            transformed_english = self._translate_with(self.tokenizer_fe, self.model_fe, foreign_translation)
+            if transformed_english == sentence or transformed_english in transformed_sentences:
+                break
+            current_input = transformed_english
+            transformed_sentences.add(transformed_english)
+        return list(transformed_sentences)
+
+
 class ParallelCorpusWriter:
     def __init__(self, dir_path: str):
         self.foreign_path = os.path.join(dir_path, "foreign.txt")
@@ -162,49 +190,76 @@ def main():
     )
     parser.add_argument("-o", "--output", help="Output directory path", default=".")
     parser.add_argument(
-        "--new-token-score-threshold",
-        help="Only predicted tokens with a score above [factor*original_score] will be taken.",
-        default=0.2,
-        type=float,
-    )
-    parser.add_argument(
-        "--original-token-score-threshold",
-        help="Only tokens whose prediction score is above this threshold will be replaced.",
-        type=float,
-        default=0,
-    )
-    parser.add_argument(
-        "-w",
-        "--window-size",
-        help="Number of sentences before and after each selected sentence to pass to the unmasker to give it more context.",
-        type=int,
-        default=1,
-    )
-    parser.add_argument(
-        "--model",
-        help=f"Name of the huggingface fill-mask model. Choose one of: {SUPPORTED_MODELS.keys()}",
-        type=str,
-        default="distilbert-base-cased"
-    )
-    parser.add_argument(
-        "--mode",
-        help=f"Mode how the generated token will be used for rewriting. Choose of: {[v.value for v in RewritingMode]}",
-        default=RewritingMode.REPLACE,
-        type=RewritingMode
-    )
-    parser.add_argument(
         "-v",
         "--verbose",
         action="store_true",
         default=False,
         help="Verbose output"
     )
+    parser.add_argument(
+        "-w",
+        "--window",
+        help="Number of sentences before and after each selected sentence to pass to the transformer model to give it more context.",
+        type=int,
+        default=1,
+    )
+    subparsers = parser.add_subparsers(dest="mode")
+    masked_parser = subparsers.add_parser("fill-mask")
+    masked_parser.add_argument(
+        "--new-token-score-threshold",
+        help="Only predicted tokens with a score above [factor*original_score] will be taken.",
+        default=0.2,
+        type=float,
+    )
+    masked_parser.add_argument(
+        "--original-token-score-threshold",
+        help="Only tokens whose prediction score is above this threshold will be replaced.",
+        type=float,
+        default=0,
+    )
+    masked_parser.add_argument(
+        "--model",
+        help=f"Name of the huggingface fill-mask model. Choose one of: {SUPPORTED_MASK_MODELS.keys()}",
+        type=str,
+        default="distilbert-base-cased"
+    )
+    masked_parser.add_argument(
+        "--fill-mask-mode",
+        help=f"Mode how the generated token will be used for rewriting. Choose of: {[v.value for v in RewritingMode]}",
+        default=RewritingMode.REPLACE,
+        type=RewritingMode
+    )
+    transform_parser = subparsers.add_parser("translate-transform")
+    transform_parser.add_argument(
+        "--model-from-english", help="Translation model used for generate translation from english input",
+        default="facebook/wmt19-en-de",
+        type=str
+    )
+    transform_parser.add_argument(
+        "--model-to-english", help="Translation model used to generate english from previously generated translation",
+        default="facebook/wmt19-de-en",
+        type=str
+    )
+    transform_parser.add_argument(
+        "--iter", help="Number of translation iterations per sentence",
+        default=3,
+        type=int
+    )
     parsed = parser.parse_args()
 
-    rewriter = Rewriter(parsed.mode, parsed.model)
-    rewriter.original_token_score_threshold = parsed.original_token_score_threshold
-    rewriter.new_token_score_threshold = parsed.new_token_score_threshold
-    reader = CorpusReader(english_path=parsed.english, foreign_path=parsed.foreign, window_size=parsed.window_size)
+    if parsed.mode == "fill-mask":
+        transformer = MaskRewriter(parsed.mode, parsed.model)
+        transformer.original_token_score_threshold = parsed.original_token_score_threshold
+        transformer.new_token_score_threshold = parsed.new_token_score_threshold
+    elif parsed.mode == "translate-transform":
+        transformer = TranslateTransformer(model_from_english=parsed.model_from_english,
+                                           model_to_english=parsed.model_to_english,
+                                           n_iterations=parsed.iter)
+        if parsed.window > 0:
+            print("Note that the '--window' option does not have any effect for this mode.")
+    else:
+        raise ValueError(f"Unknown mode: {parsed.mode}")
+    reader = CorpusReader(english_path=parsed.english, foreign_path=parsed.foreign, window_size=parsed.window)
     corpus_writer = ParallelCorpusWriter(dir_path=parsed.output)
     iterator = reader.read()
     if not parsed.verbose:
@@ -212,12 +267,13 @@ def main():
     # write configuration for later reference
     config_path = os.path.join(parsed.output, "config.json")
     config_json = parsed.__dict__.copy()
-    config_json["mode"] = config_json["mode"].value
+    if "fill-mask-mode" in config_json:
+        config_json["fill-mask-mode"] = config_json["fill-mask-mode"].value
     with open(config_path, "w") as f:
         json.dump(config_json, f, default=vars)
     # start reading sentence by sentence
     for sentence in iterator:
-        new_sentences = rewriter.rewrite(
+        new_sentences = transformer.transform(
             sentence.english_text, sentence.context_before, sentence.context_after
         )
         if parsed.verbose:
