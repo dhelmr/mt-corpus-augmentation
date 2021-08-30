@@ -4,12 +4,10 @@ import json
 import os
 import typing
 import enum
-from json import JSONEncoder
 
 import transformers
 import spacy
 from tqdm import tqdm
-from transformers import FSMTTokenizer, FSMTForConditionalGeneration
 
 
 class RewritingMode(enum.Enum):
@@ -137,11 +135,10 @@ class CorpusReader:
 
 
 class TranslateTransformer:
-    def __init__(self, model_from_english: str, model_to_english: str, n_iterations: int):
-        self.tokenizer_fe = FSMTTokenizer.from_pretrained(model_to_english)
-        self.tokenizer_ef = FSMTTokenizer.from_pretrained(model_from_english)
-        self.model_fe = FSMTForConditionalGeneration.from_pretrained(model_to_english)
-        self.model_ef = FSMTForConditionalGeneration.from_pretrained(model_from_english)
+    def __init__(self, model_names: typing.List[str], n_iterations: int):
+        self.translators = [
+           transformers.pipeline("translation", model_name) for model_name in model_names
+        ]
         self.n_iterations = n_iterations
 
     def _translate_with(self, tokenizer, model, text):
@@ -150,16 +147,21 @@ class TranslateTransformer:
         decoded = tokenizer.decode(outputs[0], skip_special_tokens=True)
         return decoded
 
+    def _transform_with_chain(self, sentence):
+        representation = sentence
+        for model in self.translators:
+            representation = model(representation)[0]["translation_text"]
+        return representation
+
     def transform(self, sentence: str, context_before="", context_after="") -> typing.List[str]:
         transformed_sentences = set()
         current_input = sentence
         for i in range(self.n_iterations):
-            foreign_translation = self._translate_with(self.tokenizer_ef, self.model_ef, current_input)
-            transformed_english = self._translate_with(self.tokenizer_fe, self.model_fe, foreign_translation)
-            if transformed_english == sentence or transformed_english in transformed_sentences:
+            transformed_english = self._transform_with_chain(current_input)
+            if transformed_english.lower() == sentence.lower() or transformed_english in transformed_sentences:
                 break
-            current_input = transformed_english
             transformed_sentences.add(transformed_english)
+            current_input = transformed_english
         return list(transformed_sentences)
 
 
@@ -231,19 +233,20 @@ def main():
     )
     transform_parser = subparsers.add_parser("translate-transform")
     transform_parser.add_argument(
-        "--model-from-english", help="Translation model used for generate translation from english input",
-        default="facebook/wmt19-en-de",
-        type=str
-    )
-    transform_parser.add_argument(
-        "--model-to-english", help="Translation model used to generate english from previously generated translation",
-        default="facebook/wmt19-de-en",
-        type=str
+        "--model-chain", help="Model chain used for transforming the sentence step by step",
+        nargs="+",
+        default=["facebook/wmt19-en-de","facebook/wmt19-de-en"]
     )
     transform_parser.add_argument(
         "--iter", help="Number of translation iterations per sentence",
         default=3,
         type=int
+    )
+    paraphrase_parser = subparsers.add_parser("paraphrase")
+    paraphrase_parser.add_argument(
+        "--mode",
+        help="Model used for paraphrasing",
+
     )
     parsed = parser.parse_args()
 
@@ -252,8 +255,7 @@ def main():
         transformer.original_token_score_threshold = parsed.original_token_score_threshold
         transformer.new_token_score_threshold = parsed.new_token_score_threshold
     elif parsed.mode == "translate-transform":
-        transformer = TranslateTransformer(model_from_english=parsed.model_from_english,
-                                           model_to_english=parsed.model_to_english,
+        transformer = TranslateTransformer(model_names=parsed.model_chain,
                                            n_iterations=parsed.iter)
         if parsed.window > 0:
             print("Note that the '--window' option does not have any effect for this mode.")
