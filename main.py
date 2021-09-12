@@ -37,6 +37,7 @@ class MaskRewriter:
         )
         self.replace_pos_tags = {"ADJ", "ADV", "NOUN", "VERB"}
         self.insert_pos_tags = {"ADJ", "ADV", "NOUN", "VERB"}
+        self.ignore_tokens = {"", ";", " ", "\t", ".", ",", "(", ")", "[", "]"}
         self.original_token_score_threshold = 0.01
         self.new_token_score_threshold = 0.01
 
@@ -76,6 +77,7 @@ class MaskRewriter:
             pred["token_str"]
             for pred in predictions
             if pred["token_str"].lower() != original_token
+            and pred["token_str"].lower() not in self.ignore_tokens
             and pred["score"] >= self.new_token_score_threshold
         ]
         return best_replacements
