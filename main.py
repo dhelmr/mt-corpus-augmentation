@@ -74,10 +74,10 @@ class MaskRewriter:
         if original_token_score < self.original_token_score_threshold:
             return []
         best_replacements = [
-            pred["token_str"]
+            pred["token_str"].strip()
             for pred in predictions
-            if pred["token_str"].lower() != original_token
-            and pred["token_str"].lower() not in self.ignore_tokens
+            if pred["token_str"].lower().strip() != original_token
+            and pred["token_str"].lower().strip() not in self.ignore_tokens
             and pred["score"] >= self.new_token_score_threshold
         ]
         return best_replacements
