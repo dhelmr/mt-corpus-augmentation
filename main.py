@@ -26,6 +26,22 @@ SUPPORTED_MASK_MODELS = {
 
 
 class MaskRewriter:
+    """
+    Rewrites english sentences using a fill-mask hugginggace model. Two modes are supported:
+    "replace" replaces tokens of specific pos tags with the mask token, whereas "insert" prepends the mask token
+    in front of them. The pos tags for which this is done are defined in the sets "replace_pos_tags",
+    resp. "insert_pos_tags".
+    The fill-mask model suggests a list of predictions for the mask token which are used for rewriting the sentence
+    (each chosen token results in a new sentence). The decision which predicted tokens are chosen can be influenced
+    by two parameters:
+    - "new_token_score_threshold" is the threshold that the predicted token's score must exceed in order to be chosen
+    - only for "replace" mode: "original_token_score_threshold" defines a value which the score of the token that gets
+    replaced (i.e. the token in the original sentence) must exceed. The rationale behind this is that the fill-mask
+    model should appropriately represent the overall context/meaning of the sentence around the token,
+    before trying to replace it. If this value is set to zero, this check is effectively skipped.
+
+    A list of appropiate models is defined by SUPPORTED_MASK_MODELS
+    """
     def __init__(self, mode: RewritingMode, model_name):
         if model_name not in SUPPORTED_MASK_MODELS:
             raise ValueError(f"{model_name} is no supported mask model. Choose one of: {SUPPORTED_MASK_MODELS.keys()}")
@@ -98,6 +114,10 @@ class MaskRewriter:
 
 @dataclasses.dataclass
 class CorpusSentence:
+    """
+    dataclass representing a parallel corpus entry, consisting of an english and foreign part
+    and additional context for the english part (= the lines before and after)
+    """
     english_text: str
     context_before: str
     context_after: str
@@ -105,6 +125,11 @@ class CorpusSentence:
 
 
 class CorpusReader:
+    """
+    Reads a parallel english-foreign corpus line by line
+    It provides context information for each english line, i.e. the lines before and after. The context is defined
+    by the window_size attribute.
+    """
     def __init__(self, english_path: str, foreign_path: str, window_size: int = 5):
         self.window_size = window_size
         self.english_path = english_path
@@ -137,6 +162,17 @@ class CorpusReader:
 
 
 class TranslateTransformer:
+    """
+    Rewrites a sentence using a chain of huggingface transformer models. In principal, any kind of model can
+    be specified here. For the task of rewriting an english sentence preserving its meaning, a model chain consisting
+    of translating transformers from english to any arbitrary language(s) and back,
+    e.g. English -> German -> Russian -> English
+
+    The parameter "n_iterations" defines how many times the model chain is (recursively) applied to each sentence. E.g.,
+    a value of 2 means that the original sentence is transformed using the specified model chain, and then the result
+    is fed to the model chain again. Each of the interim sentences are part of the output rewritten sentence.
+    If a sentence did already occur as a results in an earlier iteration, the rewriting process for a sentence is stopped.
+    """
     def __init__(self, model_names: typing.List[str], n_iterations: int):
         self.translators = [
            transformers.pipeline("translation", model_name) for model_name in model_names
@@ -243,12 +279,6 @@ def main():
         "--iter", help="Number of translation iterations per sentence",
         default=3,
         type=int
-    )
-    paraphrase_parser = subparsers.add_parser("paraphrase")
-    paraphrase_parser.add_argument(
-        "--mode",
-        help="Model used for paraphrasing",
-
     )
     parsed = parser.parse_args()
 
