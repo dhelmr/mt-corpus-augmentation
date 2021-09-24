@@ -10,7 +10,7 @@ import spacy
 from tqdm import tqdm
 
 
-class RewritingMode(enum.Enum):
+class MaskRewritingMode(enum.Enum):
     REPLACE = "replace"
     INSERT = "insert"
 
@@ -42,10 +42,10 @@ class MaskRewriter:
 
     A list of appropiate models is defined by SUPPORTED_MASK_MODELS
     """
-    def __init__(self, mode: RewritingMode, model_name):
+    def __init__(self, mode: MaskRewritingMode, model_name):
         if model_name not in SUPPORTED_MASK_MODELS:
             raise ValueError(f"{model_name} is no supported mask model. Choose one of: {SUPPORTED_MASK_MODELS.keys()}")
-        self.mode: RewritingMode = mode
+        self.mode: MaskRewritingMode = mode
         self.pos_tagger = spacy.load("en_core_web_lg")
         self.mask_token = SUPPORTED_MASK_MODELS[model_name]
         self.bert_unmasker = transformers.pipeline(
@@ -63,9 +63,9 @@ class MaskRewriter:
 
         tokens = self.pos_tagger(sentence)
         for i, tok in enumerate(tokens):
-            if self.mode == RewritingMode.REPLACE and tok.pos_ not in self.replace_pos_tags:
+            if self.mode == MaskRewritingMode.REPLACE and tok.pos_ not in self.replace_pos_tags:
                 continue
-            elif self.mode == RewritingMode.INSERT and tok.pos_ not in self.insert_pos_tags:
+            elif self.mode == MaskRewritingMode.INSERT and tok.pos_ not in self.insert_pos_tags:
                 continue
             new_tokens = self._best_tokens(
                 tokens, i, context_before, context_after
@@ -99,12 +99,12 @@ class MaskRewriter:
         return best_replacements
 
     def _make_new_sentence(self, tokens, index: int, new_token: str):
-        if self.mode == RewritingMode.REPLACE:
+        if self.mode == MaskRewritingMode.REPLACE:
             new_tokens = [
                 tok.text if i != index else new_token
                 for i, tok in enumerate(tokens)
             ]
-        elif self.mode == RewritingMode.INSERT:
+        elif self.mode == MaskRewritingMode.INSERT:
             new_tokens = [tok.text for tok in tokens]
             new_tokens.insert(index, new_token)
         else:
@@ -265,9 +265,9 @@ def main():
     )
     masked_parser.add_argument(
         "--fill-mask-mode",
-        help=f"Mode how the generated token will be used for rewriting. Choose of: {[v.value for v in RewritingMode]}",
-        default=RewritingMode.REPLACE,
-        type=RewritingMode
+        help=f"Mode how the generated token will be used for rewriting. Choose of: {[v.value for v in MaskRewritingMode]}",
+        default=MaskRewritingMode.REPLACE,
+        type=MaskRewritingMode
     )
     transform_parser = subparsers.add_parser("translate-transform")
     transform_parser.add_argument(
