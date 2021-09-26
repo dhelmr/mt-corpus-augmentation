@@ -109,7 +109,7 @@ optional arguments:
 ## Examples
 
 Read in corpus from `corpus.es` and `corpus.en` and write the generated output files to `output`. The new sentences
-will be produced with a translator chain using the [https://huggingface.co/Helsinki-NLP/opus-mt-en-fr](Helsinki-NLP) and [facebook](https://huggingface.co/facebook/wmt19-ru-en) translation models for Englisch -> French -> Russian -> English:
+will be produced with a translator chain using the [Helsinki-NLP](https://huggingface.co/Helsinki-NLP/opus-mt-en-fr) and [facebook](https://huggingface.co/facebook/wmt19-ru-en) translation models for Englisch -> French -> Russian -> English:
 
 ```
 > python main.py -f corpus.es -e corpus.en -o output -v translate-transform --model-chain Helsinki-NLP/opus-mt-en-fr Helsinki-NLP/opus-mt-fr-ru facebook/wmt19-ru-en
